@@ -18,6 +18,8 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netdb.h>
+#include <ctype.h>
 #include <netinet/if_ether.h>
 #include "./pcap.h"
 
@@ -65,17 +67,115 @@ struct sniff_ip {
 #define IP_V(ip)                (((ip)->ip_vhl) >> 4)
 
 /*
+ * print data in rows of 16 bytes: offset   hex   ascii
+ *
+ * 00000   47 45 54 20 2f 20 48 54  54 50 2f 31 2e 31 0d 0a   GET / HTTP/1.1..
+ * Source: http://www.tcpdump.org/sniffex.c
+ */
+void print_hex_ascii_line(const u_char *payload, int len, int offset) {
+	int i;
+	int gap;
+	const u_char *ch;
+
+	/* offset */
+	printf("%05d   ", offset);
+
+	/* hex */
+	ch = payload;
+	for(i = 0; i < len; i++) {
+		printf("%02x ", *ch);
+		ch++;
+		/* print extra space after 8th byte for visual aid */
+		if(i == 7) {
+			printf(" ");
+    }
+	}
+	/* print space to handle line less than 8 bytes */
+	if(len < 8) {
+		printf(" ");
+	}
+	/* fill hex gap with spaces if not full line */
+	if(len < 16) {
+		gap = 16 - len;
+		for (i = 0; i < gap; i++) {
+			printf("   ");
+		}
+	}
+	printf("   ");
+
+	/* ascii (if printable) */
+	ch = payload;
+	for(i = 0; i < len; i++) {
+		if (isprint(*ch)) {
+			printf("%c", *ch);
+    }
+		else {
+			printf(".");
+    }
+		ch++;
+	}
+
+	printf("\n");
+  return;
+}
+
+/*
+ * print packet payload data (avoid printing binary data)
+ * Source: http://www.tcpdump.org/sniffex.c
+ */
+void print_payload(const u_char *payload, int len) {
+	int len_rem = len;
+	int line_width = 16;			/* number of bytes per line */
+	int line_len;
+	int offset = 0;					/* zero-based offset counter */
+	const u_char *ch = payload;
+
+	if(len <= 0) {
+		return;
+  }
+	/* data fits on one line */
+	if(len <= line_width) {
+		print_hex_ascii_line(ch, len, offset);
+		return;
+	}
+
+	/* data spans multiple lines */
+	for( ;; ) {
+		/* compute current line length */
+		line_len = line_width % len_rem;
+		/* print line */
+		print_hex_ascii_line(ch, line_len, offset);
+		/* compute total remaining */
+		len_rem = len_rem - line_len;
+		/* shift pointer to remaining bytes to print */
+		ch = ch + line_len;
+		/* add offset */
+		offset = offset + line_width;
+		/* check if we have line width chars or less */
+		if (len_rem <= line_width) {
+			/* print last line and get out */
+			print_hex_ascii_line(ch, len_rem, offset);
+			break;
+		}
+	}
+  return;
+}
+
+/*
  * Parses the packet and prints its data.
  * Source: http://www.tcpdump.org/sniffex.c
  */
-void parsePacket(int len, const u_char *packet) {
+void parsePacket(int len, const u_char *packet, socklen_t slen) {
 	static int count = 1; /* packet counter */
+  char hostBuffer[MAXLINE];
 
 	/* declare pointers to packet headers */
 	const struct sniff_ethernet *ethernet;  /* The ethernet header [1] */
 	const struct sniff_ip *ip; /* The IP header */
+  const char *payload; /* Packet payload */
 
 	int size_ip;
+  int size_payload;
 
 	printf("\nPacket #%d:\n", count);
 	count++;
@@ -111,8 +211,24 @@ void parsePacket(int len, const u_char *packet) {
 	printf(" Time to Live: %hhu seconds/hops\n", ip->ip_ttl);
 	printf(" Protocol: %hhu\n", ip->ip_p);
 	printf(" Header Checksum: %.4x\n", ntohs(ip->ip_sum));
-	printf(" Source Address: %s\n", inet_ntoa(ip->ip_src));
-	printf(" Destination Address: %s\n", inet_ntoa(ip->ip_dst));
+  printf(" Source Address: %s, %s\n", inet_ntoa(ip->ip_src), "localhost"); //not sure how to NOT hardcode this yet
+  printf(" Destination Address: %s, %s\n", inet_ntoa(ip->ip_dst), "localhost"); //not sure how to NOT hardcode this yet
+
+  /* define/compute payload (segment) offset */
+	payload = (char *)(packet + SIZE_ETHERNET + size_ip);
+
+	/* compute payload (segment) size */
+	size_payload = ntohs(ip->ip_len) - (size_ip);
+
+	/*
+	 * Print payload data; it might be binary, so don't just
+	 * treat it as a string.
+	 */
+	if (size_payload > 0) {
+		printf(" Payload (%d bytes):\n", size_payload);
+		print_payload((const u_char *)payload, size_payload);
+	}
+
 	return;
 }
 
@@ -127,7 +243,7 @@ int main() {
 	char *hello = "The server says hello.";
 
 	struct sockaddr_in servaddr; /* server address */
-	struct sockaddr_in cliaddr;
+	struct sockaddr_in cliaddr; /* client address */
 
 	/* Create socket */
 	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -166,12 +282,12 @@ int main() {
 	/* receive packet from client, return length of message in bytes */
 	n = recvfrom(sock, (u_char *)packet, MAXLINE, MSG_WAITALL, (struct sockaddr *) &cliaddr, &len);
 	packet[n] = '\0'; // null
-	parsePacket(n, packet);
+	parsePacket(n, packet, len);
 
   /* receive packet from client, return length of message in bytes */
 	n = recvfrom(sock, (u_char *)packet, MAXLINE, MSG_WAITALL, (struct sockaddr *) &cliaddr, &len);
 	packet[n] = '\0'; // null
-	parsePacket(n, packet);
+	parsePacket(n, packet, len);
 
 	close(sock);
 	return 0;
