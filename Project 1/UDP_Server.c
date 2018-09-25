@@ -21,7 +21,7 @@
 #include <netdb.h>
 #include <ctype.h>
 #include <netinet/if_ether.h>
-#include "./pcap.h"
+#include <pcap.h>
 
 /* port num */
 #define PORT 8080
@@ -211,8 +211,8 @@ void parsePacket(int len, const u_char *packet, socklen_t slen) {
 	printf(" Time to Live: %hhu seconds/hops\n", ip->ip_ttl);
 	printf(" Protocol: %hhu\n", ip->ip_p);
 	printf(" Header Checksum: %.4x\n", ntohs(ip->ip_sum));
-  printf(" Source Address: %s, %s\n", inet_ntoa(ip->ip_src), "localhost"); //not sure how to NOT hardcode this yet
-  printf(" Destination Address: %s, %s\n", inet_ntoa(ip->ip_dst), "localhost"); //not sure how to NOT hardcode this yet
+  printf(" Source Address: %s\n", inet_ntoa(ip->ip_src)); //not sure how to NOT hardcode this yet
+  printf(" Destination Address: %s\n", inet_ntoa(ip->ip_dst)); //not sure how to NOT hardcode this yet
 
   /* define/compute payload (segment) offset */
 	payload = (char *)(packet + SIZE_ETHERNET + size_ip);

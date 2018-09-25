@@ -19,7 +19,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include "./pcap.h"
+#include <pcap.h>
 
 /* port num */
 #define PORT 8080
