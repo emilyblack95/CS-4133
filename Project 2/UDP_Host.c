@@ -247,6 +247,8 @@ void * sendFunc(void *vargp) {
       count++;
     }
 	}
+  printf("%s\n", "Done sending packets...");
+  printf("%s\n", "Now waiting for incoming packets...");
   pcap_close(pcap);
   return NULL;
 }
@@ -305,6 +307,7 @@ void * receiveFunc(void *vargp) {
     /* receive packet from client, return length of message in bytes */
     n = recvfrom(sock, (u_char *)packet, MAXLINE, MSG_WAITALL, (struct sockaddr *) &cliaddr, &len);
     if(n > 0) {
+      printf("Success: Received packet from another host.\n");
       packet[n] = '\0'; // null
 
     	/* define ethernet header */
@@ -318,7 +321,7 @@ void * receiveFunc(void *vargp) {
     	}
 
       if(strncmp(inet_ntoa(ip->ip_dst), fake_ip, strlen(fake_ip)-1) == 0) {
-        printf("\nPacket #%d\n", count);
+        printf("Packet #%d\n", count);
         /* print ether Linux Cooked Packet data */
         printf("------ LCP/Ether Header ------\n");
         printf(" Packet Size: %d bytes\n", len); /* len of entire packet */
@@ -475,11 +478,12 @@ int main(int argc, char *argv[]) {
     dataForSendFunc.host_ip = fake_host_ip;
     memcpy(dataForSendFunc.hostList, hostList, sizeof(hostList));
     dataForSendFunc.numOfNeighbors = numOfNeighbors;
-    /* Auto casts struct sendData to void * */
+    /* Auto casts struct sendData to void */
     pthread_create(&receive_thread, NULL, receiveFunc, &thisHost);
-    pthread_join(receive_thread, NULL);
+    sleep(15);
     pthread_create(&send_thread, NULL, sendFunc, &dataForSendFunc);
     pthread_join(send_thread, NULL);
+    pthread_join(receive_thread, NULL);
   }
 	return 0;
 }
