@@ -315,7 +315,6 @@ void * receiveFunc(void *vargp) {
     /* receive packet from client, return length of message in bytes */
     n = recvfrom(sock, (u_char *)packet, MAXLINE, MSG_WAITALL, (struct sockaddr *) &cliaddr, &len);
     if(n > 0) {
-      printf("Success: Packet received.\n");
       packet[n] = '\0'; // null
 
     	/* define ethernet header */
