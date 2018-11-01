@@ -181,6 +181,7 @@ void print_payload(const u_char *payload, int len) {
  * Only sends if packet source IP is same as host IP.
  */
 void * sendFunc(void *vargp) {
+  sleep(10);
   /* Variables */
   /* read in pcap file passed in as threads argument */
   sendData *data = (sendData *)vargp;
@@ -191,7 +192,7 @@ void * sendFunc(void *vargp) {
   memcpy(hostList, data->hostList, sizeof(hostList));
   const int optVal = 1;
   pcap_t *pcap;
-  struct pcap_pkthdr header;
+  struct pcap_pkthdr *header;
   char errbuffer[PCAP_ERRBUF_SIZE];
   const u_char *packet = NULL;
 	const struct sniff_ip *ip = NULL; /* The IP header */
@@ -212,44 +213,51 @@ void * sendFunc(void *vargp) {
 
   printf("%s\n", "Trying to send packets...");
   /* While there are some packets to read, get the source IP */
-	while ((packet = pcap_next(pcap, &header)) != NULL) {
-    /* define/compute ip header offset */
-    ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
-    size_ip = (IP_HL(ip)*4);
-    // printf("Error: Invalid IP header length: %u bytes\n", size_ip);
-    if (size_ip < 20) {
-      break;
-    }
-
-    char *sourceIP = inet_ntoa(ip->ip_src);
-
-    /* because strings are null terminated, must only compare first 9 chars */
-    if(strncmp(sourceIP, host_ip, strlen(host_ip)-1) == 0) {
-      printf("Success: Host IP matches Source IP: %s\n", sourceIP);
-      /* Create socket */
-    	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-    		perror("\nError: File descriptor not received.\n");
-    		exit(EXIT_FAILURE);
-    	}
-
-    	/* Set value of servaddr */
-    	memset(&servaddr, 0, sizeof(servaddr));
-      servaddr.sin_family = AF_INET;
-      servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-
-      foreach(host *n, hostList) {
-        servaddr.sin_port = n->port;
-        bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
-        sendto(sock, (char *)packet, header.len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
-        printf("Success: Sent to neighbor on port: %d\n", n->port);
+	while (pcap_next_ex(pcap, &header, &packet) != -2) {
+    /* if we DIDN'T received an ARP packet */
+    if(header->len > 44) {
+      /* define/compute ip header offset */
+      ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
+      size_ip = (IP_HL(ip)*4);
+      // printf("Error: Invalid IP header length: %u bytes\n", size_ip);
+      if (size_ip < 20) {
+        break;
       }
-      printf("Success: Sent packet group #%d to neighbors.\n", count);
-      count++;
+
+      //char *sourceIP = inet_ntoa(ip->ip_src);
+
+      char *pos;
+      if ((pos=strchr(host_ip, '\n')) != NULL) {
+        *pos = '\0';
+      }
+
+      /* because strings are null terminated, must only compare first 9 chars */
+      if(strcmp(inet_ntoa(ip->ip_src), host_ip) == 0) {
+        printf("Success: Host IP matches Source IP.\n");
+        /* Create socket */
+      	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+      		perror("\nError: File descriptor not received.\n");
+      		exit(EXIT_FAILURE);
+      	}
+
+      	/* Set value of servaddr */
+      	memset(&servaddr, 0, sizeof(servaddr));
+        servaddr.sin_family = AF_INET;
+        servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+        foreach(host *n, hostList) {
+          servaddr.sin_port = n->port;
+          bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+          sendto(sock, (char *)packet, header->len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+          printf("Success: Sent to neighbor on port: %d\n", n->port);
+        }
+        printf("Success: Sent packet group #%d to neighbors.\n", count);
+        count++;
+      }
     }
 	}
   printf("%s\n", "Done sending packets...");
   printf("%s\n", "Now waiting for incoming packets...");
-  pcap_close(pcap);
   return NULL;
 }
 
@@ -307,7 +315,7 @@ void * receiveFunc(void *vargp) {
     /* receive packet from client, return length of message in bytes */
     n = recvfrom(sock, (u_char *)packet, MAXLINE, MSG_WAITALL, (struct sockaddr *) &cliaddr, &len);
     if(n > 0) {
-      printf("Success: Received packet from another host.\n");
+      printf("Success: Packet received.\n");
       packet[n] = '\0'; // null
 
     	/* define ethernet header */
@@ -320,7 +328,12 @@ void * receiveFunc(void *vargp) {
     		break;
     	}
 
-      if(strncmp(inet_ntoa(ip->ip_dst), fake_ip, strlen(fake_ip)-1) == 0) {
+      char *pos;
+      if ((pos=strchr(fake_ip, '\n')) != NULL) {
+        *pos = '\0';
+      }
+
+      if(strcmp(inet_ntoa(ip->ip_dst), fake_ip) == 0) {
         printf("Packet #%d\n", count);
         /* print ether Linux Cooked Packet data */
         printf("------ LCP/Ether Header ------\n");
@@ -480,10 +493,9 @@ int main(int argc, char *argv[]) {
     dataForSendFunc.numOfNeighbors = numOfNeighbors;
     /* Auto casts struct sendData to void */
     pthread_create(&receive_thread, NULL, receiveFunc, &thisHost);
-    sleep(15);
     pthread_create(&send_thread, NULL, sendFunc, &dataForSendFunc);
-    pthread_join(send_thread, NULL);
     pthread_join(receive_thread, NULL);
+    pthread_join(send_thread, NULL);
   }
 	return 0;
 }
