@@ -44,6 +44,7 @@ struct sniff_ethernet {
   u_char ether_dhost[ETHER_ADDR_LEN];    /* destination host address */
   u_char ether_shost[ETHER_ADDR_LEN];    /* source host address */
   u_short ether_type;                     /* IP? ARP? RARP? etc */
+  int hops; /* stores number of hops left for dampening */
 };
 
 /* IP header */
@@ -199,6 +200,7 @@ void * sendFunc(void *vargp) {
 	const struct sniff_ip *ip = NULL; /* The IP header */
   const char *payload = NULL; /* Packet payload */
   struct sockaddr_in servaddr; /* server address */
+  struct sniff_ethernet *ethernet;
   int sock;
   int size_ip;
   int size_payload;
@@ -217,10 +219,12 @@ void * sendFunc(void *vargp) {
 	while (pcap_next_ex(pcap, &header, &packet) != -2) {
     /* if we DIDN'T received an ARP packet */
     if(header->len > 44) {
+      /* define ethernet header */
+    	ethernet = (struct sniff_ethernet*)(packet);
+      ethernet->hops = numOfNeighbors-1; /* set number of hops equal to number of neighbors */
       /* define/compute ip header offset */
       ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
       size_ip = (IP_HL(ip)*4);
-      // printf("Error: Invalid IP header length: %u bytes\n", size_ip);
       if (size_ip < 20) {
         break;
       }
@@ -255,6 +259,7 @@ void * sendFunc(void *vargp) {
       }
   	}
   }
+  printf("Number of hops per packet: %d\n", numOfNeighbors-1);
   printf("%s\n", "Done sending packets...");
   printf("%s\n", "Now waiting for incoming packets...");
   return NULL;
@@ -282,7 +287,7 @@ void * receiveFunc(void *vargp) {
   struct sockaddr_in cliaddr; /* client address */
   char hostBuffer[MAXLINE];
   /* declare pointers to packet headers */
-	const struct sniff_ethernet *ethernet;  /* The ethernet header [1] */
+	struct sniff_ethernet *ethernet;
 	const struct sniff_ip *ip; /* The IP header */
   const char *payload; /* Packet payload */
 	int size_ip;
@@ -378,7 +383,9 @@ void * receiveFunc(void *vargp) {
         count++;
       }
       /* else start the flooding algorithm */
-      else {
+      else if(ethernet->hops > 0) {
+        ethernet->hops = ethernet->hops - 1;
+        printf("Packet hops remaining: %d\n", ethernet->hops);
         printf("Packet destination doesn't match host IP, initializing flooding algorithm...\n");
         for(int i = 0; i < numOfNeighbors; i++) {
           /* If the packet didn't come from a specific neighbor, send it to them */
@@ -387,8 +394,11 @@ void * receiveFunc(void *vargp) {
           	sendto(sock, (char *) packet, header.len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
           }
         }
+        printf("Done running flooding algorithm.\n");
       }
-      printf("Done running flooding algorithm.\n");
+      else {
+        printf("Packet ran out of hops.\n");
+      }
     }
   }
   close(sock);
