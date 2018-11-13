@@ -26,6 +26,7 @@
 #include <pthread.h>
 
 #define AVG_NUM_NEIGHBORS 3
+#define DEFAULT_NUM_HOPS 4
 #define MAXLINE 1024
 #define SNAP_LEN 1518
 #define SIZE_ETHERNET 16 /*use to be 14 */
@@ -69,8 +70,8 @@ struct sniff_ip {
 
 /* Defines structure of each neighbor/host */
 typedef struct {
-  char * real_ip; /* typically 127.0.0.1 */
-  char * fake_ip; /* 10.0.0... */
+  char real_ip[10]; /* typically 127.0.0.1 */
+  char fake_ip[9]; /* 10.0.0... */
   int port;
 } host;
 
@@ -78,9 +79,7 @@ typedef struct {
  * to send func */
 typedef struct {
   char *pcapName; /* name of pcap file. double pointer due to argv */
-  host thisHost;
-  host hostList[AVG_NUM_NEIGHBORS];
-  int numOfNeighbors;
+  char *hostTxtFile; /* text file passed into program */
 } sendData;
 
 /*
@@ -188,10 +187,15 @@ void * sendFunc(void *vargp) {
   /* read in pcap file passed in as threads argument */
   sendData *data = (sendData *)vargp;
   char *pcapName = data->pcapName;
-  host *thisHost = &(data->thisHost);
-  int numOfNeighbors = data->numOfNeighbors;
-  host hostList[numOfNeighbors];
-  memcpy(hostList, data->hostList, sizeof(hostList));
+  char *fileName = data->hostTxtFile;
+  host thisHost;
+  FILE * fp;
+  char line[256];
+  char fake_host_ip[256];
+  int port;
+  int numOfNeighbors;
+  int counter = 0;
+
   const int optVal = 1;
   pcap_t *pcap;
   struct pcap_pkthdr *header;
@@ -205,6 +209,75 @@ void * sendFunc(void *vargp) {
   int size_ip;
   int size_payload;
   int count = 1;
+
+  fp = fopen(fileName, "r");
+
+  if(fp == NULL) {
+    exit(EXIT_FAILURE);
+  }
+
+  printf("%s\n", "Getting host info...");
+  /* Get real host ip */
+  /* Don't store blank lines */
+  fgets(fake_host_ip, sizeof(fake_host_ip), fp);
+  while(fake_host_ip[0] == '\n') {
+    fgets(fake_host_ip, sizeof(fake_host_ip), fp);
+  }
+  printf("Fake host IP: %s", fake_host_ip);
+
+  strncpy(thisHost.fake_ip, fake_host_ip, 9);
+  strncpy(thisHost.real_ip, "127.0.0.1", 10);
+
+  /* Get port */
+  /* Don't store blank lines */
+  fgets(line, sizeof(line), fp);
+  while(line[0] == '\n') {
+    fgets(line, sizeof(line), fp);
+  }
+  /* Convert string to int */
+  port = atoi(line);
+  printf("Port: %d\n", port);
+  thisHost.port = port;
+  /* empty string */
+  line[0] = '\0';
+
+  /* Get number of neighbors */
+  fgets(line, sizeof(line), fp);
+  /* Don't store blank lines */
+  while(line[0] == '\n') {
+    fgets(line, sizeof(line), fp);
+  }
+  /* Convert string to int */
+  numOfNeighbors = atoi(line);
+  printf("Number of Neighbors: %d\n", numOfNeighbors);
+  /* empty string */
+  line[0] = '\0';
+
+  /* declare neighbor list */
+  host hostList[numOfNeighbors];
+
+  /* while we still have neighbors to add, parse the line into a neighbor
+   * and add it to the neighborList */
+  printf("%s\n", "Neighbors:");
+  while(counter < numOfNeighbors) {
+
+    line[0] = '\0';
+    /* Get line */
+    fgets(line, sizeof(line), fp);
+    /* Don't store blank lines */
+    while(line[0] == '\n') {
+      fgets(line, sizeof(line), fp);
+    }
+
+    /* parse line by space */
+    strncpy(hostList[counter].fake_ip, strtok(line, " "), 9);
+    strncpy(hostList[counter].real_ip, strtok(NULL, " "), 10);
+    hostList[counter].port = atoi(strtok(NULL, " "));
+
+    printf("%s, %s, %d\n", hostList[counter].fake_ip, hostList[counter].real_ip, hostList[counter].port);
+    counter++;
+  }
+  fclose(fp);
 
   /* Get pcap file from argv, open it */
   pcap = pcap_open_offline(pcapName, errbuffer);
@@ -221,7 +294,7 @@ void * sendFunc(void *vargp) {
     if(header->len > 44) {
       /* define ethernet header */
     	ethernet = (struct sniff_ethernet*)(packet);
-      ethernet->hops = numOfNeighbors-1; /* set number of hops equal to number of neighbors */
+      ethernet->hops = DEFAULT_NUM_HOPS; /* SET NUMBER OF HOPS BASED ON CONSTANT */
       /* define/compute ip header offset */
       ip = (struct sniff_ip*)(packet + SIZE_ETHERNET);
       size_ip = (IP_HL(ip)*4);
@@ -230,12 +303,12 @@ void * sendFunc(void *vargp) {
       }
 
       char *pos;
-      if ((pos=strchr(thisHost->fake_ip, '\n')) != NULL) {
+      if ((pos=strchr(thisHost.fake_ip, '\n')) != NULL) {
         *pos = '\0';
       }
 
       /* because strings are null terminated, must only compare first 9 chars */
-      if(strcmp(inet_ntoa(ip->ip_src), thisHost->fake_ip) == 0) {
+      if(strcmp(inet_ntoa(ip->ip_src), thisHost.fake_ip) == 0) {
         printf("Success: Host IP matches Source IP: %s\n", inet_ntoa(ip->ip_src));
         /* Create socket */
       	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -248,18 +321,18 @@ void * sendFunc(void *vargp) {
         servaddr.sin_family = AF_INET;
         servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-        foreach(host *n, hostList) {
-          servaddr.sin_port = n->port;
+        for(int i = 0; i < numOfNeighbors; i++) {
+          // printf("%s\n", hostList[i].fake_ip);
+          servaddr.sin_port = hostList[i].port;
           bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
           sendto(sock, (char *)packet, header->len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
-          printf("Success: Sent to neighbor on port: %d\n", n->port);
+          printf("Success: Sent to neighbor: %s, %d\n", hostList[i].fake_ip, hostList[i].port);
         }
-        printf("Success: Sent packet group #%d to neighbors.\n", count);
+        printf("Success: Sent packet #%d to neighbors.\n", count);
         count++;
       }
   	}
   }
-  printf("Number of hops per packet: %d\n", numOfNeighbors-1);
   printf("%s\n", "Done sending packets...");
   printf("%s\n", "Now waiting for incoming packets...");
   return NULL;
@@ -271,13 +344,17 @@ void * sendFunc(void *vargp) {
  */
 void * receiveFunc(void *vargp) {
   /* Variables */
-  /* read in host IP passed in as threads argument */
+  /* read in pcap file passed in as threads argument */
   sendData *data = (sendData *)vargp;
-  char *pcapName = data->pcapName;
-  host *thisHost = &(data->thisHost);
-  int numOfNeighbors = data->numOfNeighbors;
-  host hostList[numOfNeighbors];
-  memcpy(hostList, data->hostList, sizeof(hostList));
+  char *fileName = data->hostTxtFile;
+  host thisHost;
+  FILE * fp;
+  char line[256];
+  char fake_host_ip[256];
+  int port;
+  int numOfNeighbors;
+  int counter = 0;
+
   const int optVal = 1;
   int sock, n;
   socklen_t len;
@@ -294,6 +371,69 @@ void * receiveFunc(void *vargp) {
   int size_payload;
   int count = 1;
 
+  fp = fopen(fileName, "r");
+
+  if(fp == NULL) {
+    exit(EXIT_FAILURE);
+  }
+
+  /* Get real host ip */
+  /* Don't store blank lines */
+  fgets(fake_host_ip, sizeof(fake_host_ip), fp);
+  while(fake_host_ip[0] == '\n') {
+    fgets(fake_host_ip, sizeof(fake_host_ip), fp);
+  }
+
+  strncpy(thisHost.fake_ip, fake_host_ip, 9);
+  strncpy(thisHost.real_ip, "127.0.0.1", 10);
+
+  /* Get port */
+  /* Don't store blank lines */
+  fgets(line, sizeof(line), fp);
+  while(line[0] == '\n') {
+    fgets(line, sizeof(line), fp);
+  }
+  /* Convert string to int */
+  port = atoi(line);
+  thisHost.port = port;
+  /* empty string */
+  line[0] = '\0';
+
+  /* Get number of neighbors */
+  fgets(line, sizeof(line), fp);
+  /* Don't store blank lines */
+  while(line[0] == '\n') {
+    fgets(line, sizeof(line), fp);
+  }
+  /* Convert string to int */
+  numOfNeighbors = atoi(line);
+  /* empty string */
+  line[0] = '\0';
+
+  /* declare neighbor list */
+  host hostList[numOfNeighbors];
+
+  /* while we still have neighbors to add, parse the line into a neighbor
+   * and add it to the neighborList */
+  while(counter < numOfNeighbors) {
+
+    line[0] = '\0';
+    /* Get line */
+    fgets(line, sizeof(line), fp);
+    /* Don't store blank lines */
+    while(line[0] == '\n') {
+      fgets(line, sizeof(line), fp);
+    }
+
+    /* parse line by space */
+    strncpy(hostList[counter].fake_ip, strtok(line, " "), 9);
+    strncpy(hostList[counter].real_ip, strtok(NULL, " "), 10);
+    hostList[counter].port = atoi(strtok(NULL, " "));
+
+    counter++;
+  }
+  fclose(fp);
+
   /* Create socket */
 	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
 		perror("\nError: File descriptor not received.\n");
@@ -306,8 +446,8 @@ void * receiveFunc(void *vargp) {
 
   /* Filling server info, bind to any address/port */
 	servaddr.sin_family = AF_INET; // IPv4
-	servaddr.sin_addr.s_addr = inet_addr(thisHost->real_ip);
-	servaddr.sin_port = thisHost->port;
+	servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	servaddr.sin_port = thisHost.port;
 
 	/* Bind the socket with the server addr */
 	if(bind(sock, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
@@ -336,12 +476,12 @@ void * receiveFunc(void *vargp) {
       printf("Received packet from: %s\n", inet_ntoa(ip->ip_src));
 
       char *pos;
-      if ((pos=strchr(thisHost->fake_ip, '\n')) != NULL) {
+      if ((pos=strchr(thisHost.fake_ip, '\n')) != NULL) {
         *pos = '\0';
       }
 
       /* if the destination ip matches the fake ip, print the packet */
-      if(strcmp(inet_ntoa(ip->ip_dst), thisHost->fake_ip) == 0) {
+      if(strcmp(inet_ntoa(ip->ip_dst), thisHost.fake_ip) == 0) {
         printf("Packet #: %d\n", count);
         /* print ether Linux Cooked Packet data */
         printf("------ LCP/Ether Header ------\n");
@@ -387,11 +527,14 @@ void * receiveFunc(void *vargp) {
         ethernet->hops = ethernet->hops - 1;
         printf("Packet hops remaining: %d\n", ethernet->hops);
         printf("Packet destination doesn't match host IP, initializing flooding algorithm...\n");
-        for(int i = 0; i < numOfNeighbors; i++) {
+
+        foreach(host *n, hostList) {
           /* If the packet didn't come from a specific neighbor, send it to them */
-          if(strcmp(inet_ntoa(ip->ip_src), hostList[i].fake_ip) != 0) {
-            /* send hello to server */
-          	sendto(sock, (char *) packet, header.len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+          if(strcmp(inet_ntoa(ip->ip_src), n->fake_ip) != 0) {
+            servaddr.sin_port = n->port;
+            bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+            printf("Success: Sent to neighbor: %s, %d\n", n->fake_ip, servaddr.sin_port);
+            sendto(sock, (char *)packet, n, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
           }
         }
         printf("Done running flooding algorithm.\n");
@@ -401,122 +544,36 @@ void * receiveFunc(void *vargp) {
       }
     }
   }
-  close(sock);
-  return NULL;
 }
 
 /* Driver */
 int main(int argc, char *argv[]) {
-  /* Variables for reading in txt file */
-  FILE * fp;
-  char line[256];
-  char fake_host_ip[256];
-  int port;
-  int numOfNeighbors;
-  int counter = 0;
-  sendData dataForSendFunc; //for sending
-  host hostList[AVG_NUM_NEIGHBORS]; //for sending
-  host thisHost; //for receiving
-  static const host emptyStruct;
-  host temp;
-
   /* Threads */
   pthread_t receive_thread;
   pthread_t send_thread;
+  sendData dataForSendFunc; //for sending
 
   /* Skip over the program name. */
 	++argv; --argc;
 
   /* If the name of the host info file doesn't exist on the payload */
 	if(argc == 0) {
-		printf("%s\n", "Error: Program requires at least 1 argument but received no arguments.");
+		printf("%s\n", "Error: Program requires 2 arguments but received 0 arguments.");
 		exit(EXIT_FAILURE);
 	}
   else {
-    fp = fopen(argv[0], "r");
-
-    if(fp == NULL) {
-      exit(EXIT_FAILURE);
-    }
-
-    printf("%s\n", "Getting host info...");
-    /* Get real host ip */
-    /* Don't store blank lines */
-    fgets(fake_host_ip, sizeof(fake_host_ip), fp);
-    while(fake_host_ip[0] == '\n') {
-      fgets(fake_host_ip, sizeof(fake_host_ip), fp);
-    }
-    printf("Fake host IP: %s", fake_host_ip);
-    thisHost.fake_ip = fake_host_ip;
-    thisHost.real_ip = "127.0.0.1";
-
-    /* Get port */
-    /* Don't store blank lines */
-    fgets(line, sizeof(line), fp);
-    while(line[0] == '\n') {
-      fgets(line, sizeof(line), fp);
-    }
-    /* Convert string to int */
-    port = atoi(line);
-    printf("Port: %d\n", port);
-    thisHost.port = port;
-    /* empty string */
-    line[0] = '\0';
-
-    /* Get number of neighbors */
-    fgets(line, sizeof(line), fp);
-    /* Don't store blank lines */
-    while(line[0] == '\n') {
-      fgets(line, sizeof(line), fp);
-    }
-    /* Convert string to int */
-    numOfNeighbors = atoi(line);
-    printf("Number of Neighbors: %d\n", numOfNeighbors);
-    /* empty string */
-    line[0] = '\0';
-
-    /* while we still have neighbors to add, parse the line into a neighbor
-     * and add it to the neighborList */
-    printf("%s\n", "Neighbors:");
-    while(counter < numOfNeighbors) {
-
-      /* Get line */
-      fgets(line, sizeof(line), fp);
-      /* Don't store blank lines */
-      while(line[0] == '\n') {
-        fgets(line, sizeof(line), fp);
-      }
-
-      /* parse line by space */
-      temp.fake_ip = strtok(line, " "); //10.0.0...
-      temp.real_ip = strtok(NULL, " "); //127.0.0.1
-      temp.port = atoi(strtok(NULL, " "));
-
-      /* add neighbor to neighborList */
-      printf("%s, %s, %d\n", temp.fake_ip, temp.real_ip, temp.port);
-      hostList[counter] = temp;
-      temp = emptyStruct;
-      line[0] = '\0';
-      counter++;
-    }
+    dataForSendFunc.hostTxtFile = argv[0];
   }
-  fclose(fp);
   /* Skip over host info file. */
 	++argv; --argc;
 
   /* If the program is/isn't being passed a pcap file */
 	if(argc != 1) {
-		printf("%s\n", "Info: Program received no PCAP file.");
-    /* If we aren't sending out data, we must only be receiving it */
-    pthread_create(&receive_thread, NULL, receiveFunc, &thisHost);
-    pthread_join(receive_thread, NULL);
+		printf("%s\n", "Error: Program received no PCAP file.");
+    exit(EXIT_FAILURE);
 	}
   else {
     dataForSendFunc.pcapName = argv[0];
-    dataForSendFunc.thisHost = thisHost;
-    memcpy(dataForSendFunc.hostList, hostList, sizeof(hostList));
-    dataForSendFunc.numOfNeighbors = numOfNeighbors;
-    /* Auto casts struct sendData to void */
     pthread_create(&receive_thread, NULL, receiveFunc, &dataForSendFunc);
     pthread_create(&send_thread, NULL, sendFunc, &dataForSendFunc);
     pthread_join(send_thread, NULL);
