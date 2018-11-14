@@ -25,8 +25,7 @@
 #include <pcap.h>
 #include <pthread.h>
 
-#define AVG_NUM_NEIGHBORS 3
-#define DEFAULT_NUM_HOPS 4
+#define DEFAULT_NUM_HOPS 2
 #define MAXLINE 1024
 #define SNAP_LEN 1518
 #define SIZE_ETHERNET 16 /*use to be 14 */
@@ -321,12 +320,11 @@ void * sendFunc(void *vargp) {
         servaddr.sin_family = AF_INET;
         servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-        for(int i = 0; i < numOfNeighbors; i++) {
-          // printf("%s\n", hostList[i].fake_ip);
-          servaddr.sin_port = hostList[i].port;
+        foreach(host *n, hostList) {
+          servaddr.sin_port = n->port;
           bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
           sendto(sock, (char *)packet, header->len, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
-          printf("Success: Sent to neighbor: %s, %d\n", hostList[i].fake_ip, hostList[i].port);
+          printf("Success: Sent to neighbor: %s, %d\n", n->fake_ip, n->port);
         }
         printf("Success: Sent packet #%d to neighbors.\n", count);
         count++;
@@ -356,7 +354,7 @@ void * receiveFunc(void *vargp) {
   int counter = 0;
 
   const int optVal = 1;
-  int sock, n;
+  int sock, n, nsock;
   socklen_t len;
   u_char packet[MAXLINE];
   struct pcap_pkthdr header;
@@ -440,6 +438,12 @@ void * receiveFunc(void *vargp) {
 		exit(EXIT_FAILURE);
 	}
 
+  /* Create socket */
+	if((nsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+		perror("\nError: File descriptor not received.\n");
+		exit(EXIT_FAILURE);
+	}
+
   /* Set value of servaddr/cliaddr */
   memset(&servaddr, 0, sizeof(servaddr));
   memset(&cliaddr, 0, sizeof(cliaddr));
@@ -473,7 +477,7 @@ void * receiveFunc(void *vargp) {
     	if (size_ip < 20) {
     		break;
     	}
-      printf("Received packet from: %s\n", inet_ntoa(ip->ip_src));
+      printf("Received packet with source: %s\n", inet_ntoa(ip->ip_src));
 
       char *pos;
       if ((pos=strchr(thisHost.fake_ip, '\n')) != NULL) {
@@ -524,26 +528,33 @@ void * receiveFunc(void *vargp) {
       }
       /* else start the flooding algorithm */
       else if(ethernet->hops > 0) {
+        packet[n] = '\0'; // null
         ethernet->hops = ethernet->hops - 1;
         printf("Packet hops remaining: %d\n", ethernet->hops);
-        printf("Packet destination doesn't match host IP, initializing flooding algorithm...\n");
-
-        foreach(host *n, hostList) {
-          /* If the packet didn't come from a specific neighbor, send it to them */
-          if(strcmp(inet_ntoa(ip->ip_src), n->fake_ip) != 0) {
-            servaddr.sin_port = n->port;
-            bind(sock, (struct sockaddr *)&servaddr, sizeof(servaddr));
-            printf("Success: Sent to neighbor: %s, %d\n", n->fake_ip, servaddr.sin_port);
-            sendto(sock, (char *)packet, n, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+        if(ethernet->hops > 0) {
+          printf("Packet destination doesn't match host IP, initializing flooding algorithm...\n");
+          foreach(host *neighbor, hostList) {
+            /* If the packet didn't come from a specific neighbor, send it to them */
+            if(strcmp(inet_ntoa(ip->ip_src), neighbor->fake_ip) != 0) {
+              /* Set value of servaddr */
+            	servaddr.sin_port = neighbor->port;
+              bind(nsock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+              printf("Success: Sent to neighbor: %s, %d\n", neighbor->fake_ip, servaddr.sin_port);
+              sendto(nsock, (const char *)packet, n, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+            }
           }
+          printf("Done running flooding algorithm.\n");
         }
-        printf("Done running flooding algorithm.\n");
+        else {
+          printf("Packet ran out of hops.\n");
+        }
       }
       else {
         printf("Packet ran out of hops.\n");
       }
     }
   }
+  return NULL;
 }
 
 /* Driver */
