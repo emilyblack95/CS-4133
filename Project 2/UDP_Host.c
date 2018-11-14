@@ -224,8 +224,6 @@ void * sendFunc(void *vargp) {
         break;
       }
 
-      //char *sourceIP = inet_ntoa(ip->ip_src);
-
       char *pos;
       if ((pos=strchr(host_ip, '\n')) != NULL) {
         *pos = '\0';

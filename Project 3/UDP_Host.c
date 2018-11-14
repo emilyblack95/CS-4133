@@ -1,6 +1,6 @@
 /*
  * UDP_Host.c
- * Similar to project 2 but utilizes flooding.
+ * Similar to project 2 but utilizes flooding w/ dampening.
  *
  * Created on: Oct 31, 2018
  * Author: emilyblack95
