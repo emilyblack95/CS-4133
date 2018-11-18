@@ -535,6 +535,7 @@ void * receiveFunc(void *vargp) {
           printf("Packet destination doesn't match host IP, initializing flooding algorithm...\n");
           foreach(host *neighbor, hostList) {
             /* If the packet didn't come from a specific neighbor, send it to them */
+            //TODO: should be last address
             if(strcmp(inet_ntoa(ip->ip_src), neighbor->fake_ip) != 0) {
               /* Set value of servaddr */
             	servaddr.sin_port = neighbor->port;
