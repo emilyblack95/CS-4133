@@ -3,7 +3,7 @@
  * Similar to project 3, but instead of flooding
  * the program/hosts utilize routing tables.
  *
- * Created on: Nov 14, 2018
+ * Created on: Nov 22, 2018
  * Author: emilyblack95
  *
  * API: https://www.tcpdump.org/manpages/pcap.3pcap.html
@@ -25,10 +25,6 @@
  #include <netinet/if_ether.h>
  #include <pcap.h>
  #include <pthread.h>
-
- //Hashtable class
- #include "strmap.h"
- #include "strmap.c"
 
  #define MAXLINE 1024
  #define SNAP_LEN 1518
@@ -76,6 +72,12 @@
    char fake_ip[9]; /* 10.0.0... */
    int port;
  } host;
+
+ /* Defines structure of a hashmap */
+ typedef struct {
+  host key;  //key part - destination
+  host value;  // value part - next hop
+} hashmap;
 
  /* Defines structure of data that needs to be passed
   * to send func */
@@ -218,14 +220,12 @@
      exit(EXIT_FAILURE);
    }
 
-   printf("%s\n", "Getting host info...");
    /* Get real host ip */
    /* Don't store blank lines */
    fgets(fake_host_ip, sizeof(fake_host_ip), fp);
    while(fake_host_ip[0] == '\n') {
      fgets(fake_host_ip, sizeof(fake_host_ip), fp);
    }
-   printf("Fake host IP: %s", fake_host_ip);
 
    strncpy(thisHost.fake_ip, fake_host_ip, 9);
    strncpy(thisHost.real_ip, "127.0.0.1", 10);
@@ -238,7 +238,6 @@
    }
    /* Convert string to int */
    port = atoi(line);
-   printf("Port: %d\n", port);
    thisHost.port = port;
    /* empty string */
    line[0] = '\0';
@@ -251,7 +250,6 @@
    }
    /* Convert string to int */
    numOfNeighbors = atoi(line);
-   printf("Number of Neighbors: %d\n", numOfNeighbors);
    /* empty string */
    line[0] = '\0';
 
@@ -260,7 +258,6 @@
 
    /* while we still have neighbors to add, parse the line into a neighbor
     * and add it to the neighborList */
-   printf("%s\n", "Neighbors:");
    while(counter < numOfNeighbors) {
 
      line[0] = '\0';
@@ -276,7 +273,6 @@
      strncpy(hostList[counter].real_ip, strtok(NULL, " "), 10);
      hostList[counter].port = atoi(strtok(NULL, " "));
 
-     printf("%s, %s, %d\n", hostList[counter].fake_ip, hostList[counter].real_ip, hostList[counter].port);
      counter++;
    }
    fclose(fp);
@@ -291,7 +287,7 @@
 
    printf("%s\n", "Trying to send packets...");
    /* While there are some packets to read, get the source IP */
- 	while (pcap_next_ex(pcap, &header, &packet) != -2) {
+ 	 while (pcap_next_ex(pcap, &header, &packet) != -2) {
      /* if we DIDN'T received an ARP packet */
      if(header->len > 44) {
        /* define ethernet header */
@@ -383,6 +379,7 @@
    while(fake_host_ip[0] == '\n') {
      fgets(fake_host_ip, sizeof(fake_host_ip), fp);
    }
+   printf("Fake Host IP: %s", fake_host_ip);
 
    strncpy(thisHost.fake_ip, fake_host_ip, 9);
    strncpy(thisHost.real_ip, "127.0.0.1", 10);
@@ -395,6 +392,7 @@
    }
    /* Convert string to int */
    port = atoi(line);
+   printf("Host Port: %d\n", port);
    thisHost.port = port;
    /* empty string */
    line[0] = '\0';
@@ -407,6 +405,7 @@
    }
    /* Convert string to int */
    numOfNeighbors = atoi(line);
+   printf("Number of Neighbors: %d\n", numOfNeighbors);
    /* empty string */
    line[0] = '\0';
 
@@ -415,8 +414,8 @@
 
    /* while we still have neighbors to add, parse the line into a neighbor
     * and add it to the neighborList */
+    printf("%s\n", "Neighbors:");
    while(counter < numOfNeighbors) {
-
      line[0] = '\0';
      /* Get line */
      fgets(line, sizeof(line), fp);
@@ -430,35 +429,86 @@
      strncpy(hostList[counter].real_ip, strtok(NULL, " "), 10);
      hostList[counter].port = atoi(strtok(NULL, " "));
 
+     printf("%s, %s, %d\n", hostList[counter].fake_ip, hostList[counter].real_ip, hostList[counter].port);
+
      counter++;
    }
+   line[0] = '\0';
+   counter = 0;
+
+   /* Get size of routing table */
+   fgets(line, sizeof(line), fp);
+   /* Don't store blank lines */
+   while(line[0] == '\n') {
+     fgets(line, sizeof(line), fp);
+   }
+   /* Convert string to int */
+   int sizeOfMap = atoi(line);
+   /* empty string */
+   line[0] = '\0';
+
+   /* declare routing table */
+   hashmap routingTable[sizeOfMap];
+
+   printf("Routing Table: \n");
+
+   while(counter < sizeOfMap) {
+     line[0] = '\0';
+     /* Get line */
+     fgets(line, sizeof(line), fp);
+     /* Don't store blank lines */
+     while(line[0] == '\n') {
+       fgets(line, sizeof(line), fp);
+     }
+
+     host a; //destination
+     host b; //next hop
+
+     // read in destination info
+     strncpy(a.fake_ip, strtok(line, " "), 9);
+     strcpy(a.real_ip, "127.0.0.1"); //not in input file, add manually
+     a.port = atoi(strtok(NULL, " "));
+
+     // read in next hop info
+     strncpy(b.fake_ip, strtok(NULL, " "), 9);
+     strcpy(b.real_ip, "127.0.0.1"); //not in input file, add manually
+     b.port = atoi(strtok(NULL, " "));
+
+     // add to routing table
+     routingTable[counter].key = a;
+     routingTable[counter].value = b;
+
+     printf("%s %d %s %d \n", a.fake_ip, a.port, b.fake_ip, b.port);
+     counter++;
+   }
+
    fclose(fp);
 
-   /* Create socket */
- 	if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
- 		perror("\nError: File descriptor not received.\n");
- 		exit(EXIT_FAILURE);
- 	}
+    /* Create socket */
+ 	 if((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+ 		 perror("\nError: File descriptor not received.\n");
+ 		 exit(EXIT_FAILURE);
+ 	 }
 
-   /* Create socket */
- 	if((nsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
- 		perror("\nError: File descriptor not received.\n");
- 		exit(EXIT_FAILURE);
- 	}
+    /* Create socket */
+ 	 if((nsock = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+ 		 perror("\nError: File descriptor not received.\n");
+ 		 exit(EXIT_FAILURE);
+ 	 }
 
    /* Set value of servaddr/cliaddr */
    memset(&servaddr, 0, sizeof(servaddr));
    memset(&cliaddr, 0, sizeof(cliaddr));
 
    /* Filling server info, bind to any address/port */
- 	servaddr.sin_family = AF_INET; // IPv4
- 	servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
- 	servaddr.sin_port = thisHost.port;
+ 	 servaddr.sin_family = AF_INET; // IPv4
+ 	 servaddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+ 	 servaddr.sin_port = thisHost.port;
 
- 	/* Bind the socket with the server addr */
- 	if(bind(sock, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
- 		printf("Info: Socket already bound with server address.\n");
- 	}
+ 	 /* Bind the socket with the server addr */
+ 	 if(bind(sock, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
+ 		  printf("Info: Socket already bound with server address.\n");
+ 	 }
 
    len = sizeof(servaddr);
 
@@ -479,7 +529,7 @@
      	if (size_ip < 20) {
      		break;
      	}
-       printf("Received packet with source: %s\n", inet_ntoa(ip->ip_src));
+       printf("Received packet with destination: %s\n", inet_ntoa(ip->ip_dst));
 
        char *pos;
        if ((pos=strchr(thisHost.fake_ip, '\n')) != NULL) {
@@ -488,7 +538,7 @@
 
        /* if the destination ip matches the fake ip, print the packet */
        if(strcmp(inet_ntoa(ip->ip_dst), thisHost.fake_ip) == 0) {
-         printf("Packet #: %d\n", count);
+         printf("Packet #%d: \n", count);
          /* print ether Linux Cooked Packet data */
          printf("------ LCP/Ether Header ------\n");
          printf(" Packet Size: %d bytes\n", len); /* len of entire packet */
@@ -530,24 +580,21 @@
        }
        /* else check routing table and re-route packet */
        else {
-         //TODO: finish this
-         //TODO: make routing table in receive func
          packet[n] = '\0'; // null
          printf("Packet destination doesn't match host IP, initializing routing algorithm...\n");
          //check if destination is a key in the hashtable, find where to route it to
-           foreach(host *neighbor, hostList) {
-             //if the destination is a key, route it
-             if(strcmp(inet_ntoa(ip->ip_src), neighbor->fake_ip) != 0) {
-               printf("Packet is being routed to: %s, %d\n", sourceIP, port);
-               /* Set value of servaddr */
-             	servaddr.sin_port = neighbor->port;
-               bind(nsock, (struct sockaddr *)&servaddr, sizeof(servaddr));
-               printf("Success: Sent to neighbor: %s, %d\n", neighbor->fake_ip, servaddr.sin_port);
-               sendto(nsock, (const char *)packet, n, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
-             }
+         for(int i = 0; i < sizeOfMap; i++) {
+           //if the destination is a key, route it
+           if(strcmp(inet_ntoa(ip->ip_dst), routingTable[i].key.fake_ip) == 0) {
+             /* Set value of servaddr */
+           	 servaddr.sin_port = routingTable[i].value.port;
+             bind(nsock, (struct sockaddr *)&servaddr, sizeof(servaddr));
+             printf("Success: Packet routed to: %s, %d\n", routingTable[i].value.fake_ip, servaddr.sin_port);
+             sendto(nsock, (const char *)packet, n, 0, (const struct sockaddr *) &servaddr, sizeof(servaddr));
+             break;
            }
-           printf("Done running routing algorithm.\n");
          }
+         printf("Done running routing algorithm.\n");
        }
      }
    }
