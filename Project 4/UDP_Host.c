@@ -27,6 +27,9 @@
  #include <pthread.h>
 
  #define MAXLINE 1024
+ #define BASE_PORT_NUM 5000
+ #define REAL_IP_LEN 10
+ #define FAKE_IP_LEN 9
  #define SNAP_LEN 1518
  #define SIZE_ETHERNET 16 /*use to be 14 */
  #define ETHER_ADDR_LEN 8
@@ -68,8 +71,8 @@
 
  /* Defines structure of each neighbor/host */
  typedef struct {
-   char real_ip[10]; /* typically 127.0.0.1 */
-   char fake_ip[9]; /* 10.0.0... */
+   char real_ip[REAL_IP_LEN]; /* typically 127.0.0.1 */
+   char fake_ip[FAKE_IP_LEN]; /* 10.0.0... */
    int port;
  } host;
 
@@ -366,6 +369,7 @@
  	 int size_ip;
    int size_payload;
    int count = 1;
+   int portNum = 0;
 
    fp = fopen(fileName, "r");
 
@@ -450,7 +454,7 @@
    /* declare routing table */
    hashmap routingTable[sizeOfMap];
 
-   printf("Routing Table: \n");
+   printf("Routing Table with size of %d: \n", sizeOfMap);
 
    while(counter < sizeOfMap) {
      line[0] = '\0';
@@ -464,21 +468,55 @@
      host a; //destination
      host b; //next hop
 
+     char nextToLast;
+     char last;
+
      // read in destination info
-     strncpy(a.fake_ip, strtok(line, " "), 9);
+     strncpy(a.fake_ip, strtok(line, " "), FAKE_IP_LEN);
+     /* gets rid of newline char */
+     char *pos = NULL;
+     if ((pos=strchr(a.fake_ip, '\n')) != NULL) {
+       *pos = '\0';
+     }
+     last = a.fake_ip[strlen(a.fake_ip)-1];
+     nextToLast = a.fake_ip[strlen(a.fake_ip)-2];
+
+     // ex: 10.0.0.7
+     if(nextToLast == '.') {
+       portNum = last - '0';
+     }
+     // ex: 10.0.0.11
+     else {
+       portNum = (nextToLast-'0')*10 + (last-'0')*1;
+     }
+     a.port = BASE_PORT_NUM + portNum;
      strcpy(a.real_ip, "127.0.0.1"); //not in input file, add manually
-     a.port = atoi(strtok(NULL, " "));
 
      // read in next hop info
-     strncpy(b.fake_ip, strtok(NULL, " "), 9);
+     strncpy(b.fake_ip, strtok(NULL, " "), FAKE_IP_LEN);
+     if ((pos=strchr(b.fake_ip, '\n')) != NULL) {
+       *pos = '\0';
+     }
+     last = b.fake_ip[strlen(b.fake_ip)-1];
+     nextToLast = b.fake_ip[strlen(b.fake_ip)-2];
+
+     // ex: 10.0.0.7
+     if(nextToLast == '.') {
+       portNum = last - '0';
+     }
+     // ex: 10.0.0.11
+     else {
+       portNum = (nextToLast-'0')*10 + (last-'0')*1;
+     }
+     b.port = BASE_PORT_NUM + portNum;
      strcpy(b.real_ip, "127.0.0.1"); //not in input file, add manually
-     b.port = atoi(strtok(NULL, " "));
+     // b.port = atoi(strtok(NULL, " "));
 
      // add to routing table
      routingTable[counter].key = a;
      routingTable[counter].value = b;
 
-     printf("%s %d %s %d \n", a.fake_ip, a.port, b.fake_ip, b.port);
+     printf("Dest: %s Next Hop: %s \n", a.fake_ip, b.fake_ip);
      counter++;
    }
 
