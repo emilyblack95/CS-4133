@@ -189,7 +189,7 @@
   * Only sends if packet source IP is same as host IP.
   */
  void * sendFunc(void *vargp) {
-   sleep(10);
+   sleep(15);
    /* Variables */
    /* read in pcap file passed in as threads argument */
    sendData *data = (sendData *)vargp;
@@ -456,7 +456,7 @@
 
    printf("Routing Table with size of %d: \n", sizeOfMap);
 
-   while(counter < sizeOfMap) {
+   while(counter < sizeOfMap-1) {
      line[0] = '\0';
      /* Get line */
      fgets(line, sizeof(line), fp);
